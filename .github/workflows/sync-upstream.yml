@@ -1,5 +1,10 @@
 name: Sync Upstream
 
+# Uses org-level SYNC_PAT secret (fine-grained PAT, Contents R/W + Workflows R/W
+# on the three fork repos: openclaw-fork, paperclip-fork, hermes-fork).
+# The default GITHUB_TOKEN lacks `workflow` scope and aborts the sync whenever
+# upstream touches .github/workflows/*. SYNC_PAT carries the needed scope.
+
 on:
   schedule:
     # Weekly on Monday at 09:00 UTC (~2 AM Pacific)
@@ -15,5 +20,5 @@ jobs:
     steps:
       - name: Sync fork with upstream default branch
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.SYNC_PAT }}
         run: gh repo sync ${{ github.repository }}
