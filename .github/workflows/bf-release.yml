@@ -1,0 +1,76 @@
+name: bf-release
+
+on:
+  push:
+    tags:
+      - "bf-v*"
+
+# Prevents double-builds of the same tag if a push is retried; ref-scoped
+# so two different tags can build concurrently without serialization.
+concurrency:
+  group: bf-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write     # required for `gh release create` to publish assets
+
+jobs:
+  build_and_release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tagged commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          # PINNED to match the fork's package.json `packageManager` field
+          # (verified live 2026-05-28: `pnpm@9.15.4`).
+          version: 9.15.4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace
+        # Root script: `preflight:workspace-links && pnpm -r build`.
+        # NOT bare `pnpm -r build` — preflight catches PNPM workspace
+        # symlink corruption that would otherwise produce a broken artifact.
+        run: pnpm run build
+
+      # NO `pnpm prune --prod` — tsx is required at runtime by the systemd
+      # ExecStart (paperclip-install.js:1166-1198) but lives under
+      # devDependencies in server/package.json.
+
+      - name: Build tarball + sha256 sidecar
+        run: |
+          TAG="${{ github.ref_name }}"
+          tar -czf "/tmp/paperclip-${TAG}.tar.gz" \
+              --transform "s,^\./,paperclip-${TAG}/," \
+              --exclude='./.git' \
+              --exclude='./.github' \
+              --exclude='./desktop.ini' \
+              --exclude='*/.cache' \
+              --exclude='**/*.test.ts' \
+              --exclude='**/*.test.js' \
+              .
+          cd /tmp && sha256sum "paperclip-${TAG}.tar.gz" \
+              > "paperclip-${TAG}.tar.gz.sha256"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          gh release create "${TAG}" \
+              "/tmp/paperclip-${TAG}.tar.gz" \
+              "/tmp/paperclip-${TAG}.tar.gz.sha256" \
+              --title "BF Paperclip ${TAG}" \
+              --notes "Auto-built from paperclip-fork at ${TAG}."
