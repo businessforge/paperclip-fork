@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  issues: write        # BF #255: required for the if: failure() issue-opener below
 
 jobs:
   sync:
@@ -22,3 +23,33 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.SYNC_PAT }}
         run: gh repo sync ${{ github.repository }}
+
+      # AC-6 (BF #255): a failed scheduled sync is otherwise invisible (no PR, no
+      # notification). This fork now carries a ui/src patch (#255), so a silent sync
+      # stall = drift on the carried hunks. Open-or-update one pinned tracking issue
+      # as a loud, queryable signal.
+      - name: Alert on sync failure (open/update tracking issue)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PAT }}      # SYNC_PAT must carry Issues:Write; else point at GITHUB_TOKEN (permissions: issues: write covers it)
+          TITLE: "chore: weekly upstream sync FAILED"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          BODY="Weekly \`gh repo sync\` failed on $(date -u +%FT%TZ).
+
+          Run: ${RUN_URL}
+
+          The fork carries a BF \`ui/src\` patch (#255); a stalled sync means the fork is
+          drifting from upstream. A failed sync is usually a non-fast-forward / conflict on
+          the carried hunks (ui/index.html, ui/src/main.tsx). Resolve by syncing locally and
+          re-applying the patch, then close this issue. (Build-side: the dist build-assert
+          (#255) catches the case where a GREEN sync silently drops the emit.)"
+          NUM=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+                  --search "in:title \"$TITLE\"" --json number,title \
+                  --jq "[.[] | select(.title==\"$TITLE\")][0].number // empty")
+          if [ -n "$NUM" ]; then
+            gh issue comment "$NUM" --repo "$GITHUB_REPOSITORY" --body "$BODY"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$BODY" --label "sync-failure" || \
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$BODY"
+          fi

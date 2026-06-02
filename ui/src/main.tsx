@@ -22,7 +22,23 @@ import "./index.css";
 
 initPluginBridge(React, ReactDOM);
 
-if ("serviceWorker" in navigator) {
+// BF #255: per-customer base path for sub-path mounting (e.g. the BF portal
+// embeds Paperclip under `/embed/portal/{short}/paperclip`). The proxy rewrites
+// the inline `window.__PAPERCLIP_BASE_PATH__=""` global in index.html to the
+// mount; a standalone (root) deploy leaves it `""`. Read once at module scope so
+// both the service-worker gate (below) and `<BrowserRouter basename>` use it.
+declare global {
+  interface Window {
+    __PAPERCLIP_BASE_PATH__?: string;
+  }
+}
+
+const basePath = (typeof window !== "undefined" && window.__PAPERCLIP_BASE_PATH__) || "";
+
+// Gate the root-scope service worker: under a non-empty mount `register("/sw.js")`
+// targets the origin root (served as the SPA shell, not JS) and errors. Only
+// register for a genuine root deploy (`basePath === ""`).
+if (!basePath && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js");
   });
@@ -46,7 +62,7 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <BrowserRouter>
+        <BrowserRouter basename={basePath}>
           <CompanyProvider>
             <EditorAutocompleteProvider>
               <ToastProvider>
