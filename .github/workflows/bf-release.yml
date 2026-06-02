@@ -45,6 +45,21 @@ jobs:
         # symlink corruption that would otherwise produce a broken artifact.
         run: pnpm run build
 
+      # BF #255 (AC-6 part-2): assert the base-path global survived the UI build and
+      # landed in the BUILT dist HTML. If an upstream sync dropped/relocated the H1
+      # emit, FAIL the release LOUDLY rather than publishing a no-op (base-less) bundle.
+      # Pinned to the EXACT double-quote-shaped regex the portal Step-0 rewrite matches
+      # (`/window\.__PAPERCLIP_BASE_PATH__\s*=\s*"[^"]*"/`), NOT a loose substring — a
+      # quote-style / `let` drift would survive a loose grep but break the live portal
+      # rewrite. grep -E on the built file is the self-healing link.
+      - name: Assert base-path global present in built UI (BF #255)
+        run: |
+          DIST="ui/dist/index.html"
+          test -f "$DIST" || { echo "::error::$DIST not produced by build"; exit 1; }
+          grep -Eq 'window\.__PAPERCLIP_BASE_PATH__\s*=\s*"[^"]*"' "$DIST" \
+            || { echo "::error::BF #255 base-path global missing/drifted in $DIST — refusing to publish a no-op bundle"; exit 1; }
+          echo "ok: base-path global present in $DIST"
+
       # NO `pnpm prune --prod` — tsx is required at runtime by the systemd
       # ExecStart (paperclip-install.js:1166-1198) but lives under
       # devDependencies in server/package.json.
